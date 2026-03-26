@@ -17,84 +17,103 @@ from storage import save_to_csv
 
 
 def main():
-    print("Iniciando el scraper de Privalia...")
-
+    print("S'està iniciant l'scraper de Privalia...")
     crawler = PrivaliaCrawler()
 
     try:
-        # 1. Login
         crawler.login()
 
         all_products_data = []
 
-        # 2. Llegir home per descobrir campanyes
-        print(f"\nCarregant pàgina principal per descobrir campanyes: {BASE_URL}")
-        home_html = crawler.get_html(BASE_URL)
+        print(f"\nS'està carregant la pàgina principal per descobrir campanyes: {BASE_URL}")
+        home_html = crawler.get_html(
+            BASE_URL,
+            wait_seconds=5,
+            scroll=True,
+            debug_prefix="01_home_after_login"
+        )
+
         campaigns = parse_campaign_list(home_html)
+        print(f"Campanyes trobades: {len(campaigns)}")
 
         if not campaigns:
-            print("No s'han trobat campanyes a la Home.")
-            campaigns = [
-                {
-                    "name": "Campaña Test",
-                    "url": "https://es.privalia.com/gr/catalog/897409",
-                    "sector": "Moda",
-                    "end_date": "",
-                }
-            ]
-            print("Usant URL de prova...")
+            crawler.save_current_page("01_home_no_campaigns_found")
+            raise RuntimeError(
+                "No s'han trobat campanyes reals a la pàgina principal. "
+                "Revisa debug/01_home_after_login.html"
+            )
 
         campaigns_to_visit = campaigns[:MAX_CAMPAIGNS_TO_VISIT]
 
-        # 3. Iterar campanyes
-        for camp in campaigns_to_visit:
-            camp_url = camp.get("url")
-            print(f"\n--- Entrant a la campanya: {camp.get('name', camp_url)} ---")
+        for camp_index, camp in enumerate(campaigns_to_visit, start=1):
+            camp_url = camp.get("url", "")
+            camp_name = camp.get("name", "").strip() or camp_url
+            print(
+                f"\n--- [{camp_index}/{len(campaigns_to_visit)}] "
+                f"S'està entrant a la campanya: {camp_name} ---"
+            )
 
-            camp_html = crawler.get_html(camp_url)
+            if not camp_url.startswith("http"):
+                print("URL de campanya no vàlida, s'ignora.")
+                continue
+
+            camp_html = crawler.get_html(
+                camp_url,
+                wait_seconds=5,
+                scroll=True,
+                debug_prefix=f"02_campaign_{camp_index}"
+            )
+
             base_products = parse_product_list(camp_html, camp)
+            print(f"Productes trobats a la campanya: {len(base_products)}")
 
             if not base_products:
-                print("No s'han trobat productes en aquesta campanya.")
-                base_products = [
-                    {
-                        "campaign_name": camp.get("name", ""),
-                        "campaign_sector": camp.get("sector", ""),
-                        "campaign_end_date": camp.get("end_date", ""),
-                        "product_name": "Test",
-                        "product_url": "https://es.privalia.com/gr/...",
-                    }
-                ]
+                crawler.save_current_page(f"02_campaign_{camp_index}_no_products_found")
+                print("No s'han trobat productes reals en aquesta campanya.")
+                time.sleep(REQUEST_DELAY_SECONDS)
+                continue
 
             base_products_to_visit = base_products[:MAX_PRODUCTS_PER_CAMPAIGN_TO_VISIT]
 
-            # 4. Iterar productes
-            for product in base_products_to_visit:
-                prod_url = product.get("product_url")
+            for prod_index, product in enumerate(base_products_to_visit, start=1):
+                prod_url = product.get("product_url", "")
+                print(
+                    f"  [{prod_index}/{len(base_products_to_visit)}] "
+                    f"S'està analitzant el producte: {prod_url}"
+                )
 
-                if prod_url and prod_url.startswith("http"):
-                    print(f"  Analitzant producte: {prod_url}")
-                    prod_html = crawler.get_html(prod_url)
-                    complete_product_data = parse_product_detail_page(prod_html, product)
-                    all_products_data.append(complete_product_data)
-                    time.sleep(REQUEST_DELAY_SECONDS)
-                else:
-                    all_products_data.append(product)
+                if not prod_url.startswith("http"):
+                    print("  URL de producte no vàlida, s'ignora.")
+                    continue
+
+                prod_html = crawler.get_html(
+                    prod_url,
+                    wait_seconds=4,
+                    scroll=False,
+                    debug_prefix=f"03_product_{camp_index}_{prod_index}"
+                )
+
+                complete_product_data = parse_product_detail_page(prod_html, product)
+                all_products_data.append(complete_product_data)
+
+                time.sleep(REQUEST_DELAY_SECONDS)
 
             time.sleep(REQUEST_DELAY_SECONDS)
 
-        # 5. Guardar CSV
         if all_products_data:
             save_to_csv(all_products_data, OUTPUT_CSV)
             print(
                 f"\nScraping completat. "
-                f"Dades guardades per {len(all_products_data)} productes a {OUTPUT_CSV}"
+                f"S'han desat dades de {len(all_products_data)} productes a {OUTPUT_CSV}"
             )
         else:
-            print("\nScraping finalitzat però sense dades. Revisa el parser.")
+            raise RuntimeError(
+                "L'scraping ha finalitzat però no s'han obtingut dades reals de productes. "
+                "Revisa els HTML desats a la carpeta /debug."
+            )
 
     except Exception as e:
-        print(f"Ocurrió un error general durante la ejecución: {e}")
+        print(f"S'ha produït un error general durant l'execució: {e}")
 
     finally:
         crawler.close()

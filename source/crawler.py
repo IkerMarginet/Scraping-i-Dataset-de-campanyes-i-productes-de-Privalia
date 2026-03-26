@@ -1,9 +1,11 @@
+import os
 import time
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.common.keys import Keys
 
 from config import (
@@ -12,6 +14,7 @@ from config import (
     LOGIN_URL,
     USER_AGENT,
     TIMEOUT_SECONDS,
+    DEBUG_DIR,
 )
 
 
@@ -19,7 +22,7 @@ class PrivaliaCrawler:
     def __init__(self):
         options = webdriver.ChromeOptions()
 
-        # Treu el comentari quan tot funcioni
+        # Descomenta això si després vols executar-ho en segon pla
         # options.add_argument("--headless=new")
 
         options.add_argument("--disable-gpu")
@@ -44,31 +47,24 @@ class PrivaliaCrawler:
             f"{self.driver.execute_script('return navigator.userAgent')}"
         )
 
-    def _save_debug_files(self, prefix="debug_login"):
-        screenshot_name = f"{prefix}.png"
-        html_name = f"{prefix}.html"
+    def _save_debug_files(self, prefix="debug"):
+        screenshot_name = os.path.join(DEBUG_DIR, f"{prefix}.png")
+        html_name = os.path.join(DEBUG_DIR, f"{prefix}.html")
 
         self.driver.save_screenshot(screenshot_name)
         with open(html_name, "w", encoding="utf-8") as f:
             f.write(self.driver.page_source)
 
-        print(f"S'han guardat fitxers de debug: {screenshot_name}, {html_name}")
+        print(f"S'han guardat fitxers de depuració: {screenshot_name}, {html_name}")
+
+    def save_current_page(self, prefix):
+        self._save_debug_files(prefix)
 
     def _find_first_present(self, selectors, timeout=6):
         for by, selector in selectors:
             try:
                 return WebDriverWait(self.driver, timeout).until(
                     EC.presence_of_element_located((by, selector))
-                )
-            except TimeoutException:
-                continue
-        return None
-
-    def _find_first_visible(self, selectors, timeout=6):
-        for by, selector in selectors:
-            try:
-                return WebDriverWait(self.driver, timeout).until(
-                    EC.visibility_of_element_located((by, selector))
                 )
             except TimeoutException:
                 continue
@@ -91,7 +87,6 @@ class PrivaliaCrawler:
     def _switch_to_frame_with_element(self, selectors):
         self.driver.switch_to.default_content()
 
-        # Primer mirar al document principal
         found = self._find_first_present(selectors, timeout=2)
         if found is not None:
             return found
@@ -113,14 +108,34 @@ class PrivaliaCrawler:
         self.driver.switch_to.default_content()
         return None
 
+    def _scroll_page(self, max_scrolls=8, pause=1.2):
+        last_height = self.driver.execute_script("return document.body.scrollHeight")
+        for _ in range(max_scrolls):
+            self.driver.execute_script(
+                "window.scrollTo(0, document.body.scrollHeight);"
+            )
+            time.sleep(pause)
+
+            new_height = self.driver.execute_script("return document.body.scrollHeight")
+            if new_height == last_height:
+                break
+            last_height = new_height
+
+        self.driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(0.8)
+
     def login(self):
-        print("Iniciando proceso de login...")
+        if not PRIVALIA_EMAIL or not PRIVALIA_PASSWORD:
+            raise ValueError(
+                "Falten les credencials. Defineix PRIVALIA_EMAIL i PRIVALIA_PASSWORD."
+            )
+
+        print("S'està iniciant el procés de login...")
         self.driver.get(LOGIN_URL)
         time.sleep(3)
 
-        # 1. Cookies
         try:
-            print("Esperando banner de cookies...")
+            print("S'està esperant el bàner de galetes...")
             cookie_selectors = [
                 (
                     By.XPATH,
@@ -138,13 +153,13 @@ class PrivaliaCrawler:
                         EC.element_to_be_clickable((by, selector))
                     )
                     self.driver.execute_script("arguments[0].click();", cookie_button)
-                    print("Cookies aceptadas.")
+                    print("Galetes acceptades.")
                     time.sleep(2)
                     break
                 except TimeoutException:
                     continue
         except Exception:
-            print("No se encontró el banner de cookies o ya estaba aceptado.")
+            print("No s'ha trobat el bàner de galetes o ja estava acceptat.")
 
         email_selectors = [
             (By.CSS_SELECTOR, "input[type='email']"),
@@ -207,8 +222,7 @@ class PrivaliaCrawler:
             (By.XPATH, "//input[@type='submit']"),
         ]
 
-        # 2. Obrir login si cal
-        print("Comprobando si hay que abrir el login...")
+        print("S'està comprovant si cal obrir el formulari de login...")
         email_input = self._switch_to_frame_with_element(email_selectors)
 
         if email_input is None:
@@ -222,7 +236,7 @@ class PrivaliaCrawler:
                         )
                         time.sleep(0.5)
                         self.driver.execute_script("arguments[0].click();", el)
-                        print("Botón de login pulsado.")
+                        print("S'ha premut el botó de login.")
                         time.sleep(3)
 
                         email_input = self._switch_to_frame_with_element(email_selectors)
@@ -237,21 +251,18 @@ class PrivaliaCrawler:
         if email_input is None:
             self._save_debug_files("debug_login_no_email")
             raise TimeoutException(
-                "No apareció el campo email. Revisa debug_login_no_email.png y .html."
+                "No ha aparegut el camp de correu electrònic. Revisa debug/debug_login_no_email.*"
             )
 
-        # 3. Escriure email
-        print("Rellenando email...")
+        print("S'està omplint el correu electrònic...")
         email_input.clear()
         email_input.send_keys(PRIVALIA_EMAIL)
         time.sleep(1)
 
-        # 4. Provar si password ja existeix
         password_input = self._switch_to_frame_with_element(password_selectors)
 
-        # 5. Si no existeix, fer pas intermedi
         if password_input is None:
-            print("El password no aparece aún. Probando paso intermedio...")
+            print("La contrasenya encara no apareix. S'està provant un pas intermedi...")
             clicked_continue = self._click_first_clickable(continue_selectors, timeout=5)
 
             if not clicked_continue:
@@ -267,30 +278,41 @@ class PrivaliaCrawler:
         if password_input is None:
             self._save_debug_files("debug_login_no_password")
             raise TimeoutException(
-                "No apareció el campo password. Revisa debug_login_no_password.png y .html."
+                "No ha aparegut el camp de contrasenya. Revisa debug/debug_login_no_password.*"
             )
 
-        # 6. Escriure password
-        print("Rellenando password...")
+        print("S'està omplint la contrasenya...")
         password_input.clear()
         password_input.send_keys(PRIVALIA_PASSWORD)
         time.sleep(1)
 
-        # 7. Enviar login final
         clicked_submit = self._click_first_clickable(submit_selectors, timeout=5)
         if not clicked_submit:
             password_input.send_keys(Keys.ENTER)
 
-        print("Credenciales enviadas.")
+        print("Credencials enviades.")
         time.sleep(6)
         self.driver.switch_to.default_content()
 
-    def get_html(self, url):
-        print(f"Navegando a: {url}")
+    def get_html(self, url, wait_seconds=4, scroll=False, debug_prefix=None):
+        print(f"S'està navegant a: {url}")
         self.driver.get(url)
-        time.sleep(4)
-        return self.driver.page_source
+        time.sleep(wait_seconds)
+
+        if scroll:
+            self._scroll_page()
+
+        html = self.driver.page_source
+
+        if debug_prefix:
+            self._save_debug_files(debug_prefix)
+
+        return html
 
     def close(self):
         if self.driver:
-            self.driver.quit()
+            try:
+                self.driver.quit()
+                print("El navegador s'ha tancat correctament.")
+            except WebDriverException:
+                pass
