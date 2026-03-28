@@ -30,7 +30,8 @@ DATA_DIR = os.path.join(PROJECT_ROOT, "dataset")
 DOCS_DIR = os.path.join(PROJECT_ROOT, "docs")
 DEBUG_DIR = os.path.join(DOCS_DIR, "imatges")
 
-OUTPUT_CSV = os.path.join(DATA_DIR, "privalia_dataset.csv")
+CAMPAIGNS_CSV = os.path.join(DATA_DIR, "privalia_campaigns.csv")
+PRODUCTS_CSV = os.path.join(DATA_DIR, "privalia_products.csv")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(DOCS_DIR, exist_ok=True)

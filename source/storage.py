@@ -2,44 +2,49 @@ import csv
 import os
 
 
-def save_to_csv(data_list, filepath):
-    """
-    Guarda una llista de diccionaris en un CSV.
-    Sobreescriu el fitxer en cada execució.
-    """
-    if not data_list:
-        print("No hi ha dades per desar.")
+def save_campaigns(campaigns_list, filepath):
+    """Guarda dades de campanyes/marques (sobrescreu perquè es fa un cop per sessió)."""
+    if not campaigns_list:
         return
 
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    headers = [
+        "campaign_url",
+        "brand_name",
+        "sector",
+        "end_date_text",
+        "extraction_timestamp",
+    ]
+    _write_csv(campaigns_list, filepath, headers, append=False)
 
-    all_headers = set()
-    for item in data_list:
-        all_headers.update(item.keys())
 
-    preferred_order = [
-        "campaign_name",
-        "campaign_sector",
-        "campaign_end_date",
-        "product_name",
+def save_product_incremental(product_dict, filepath):
+    """Guarda un sol producte al final del fitxer (append)."""
+    headers = [
         "product_url",
+        "campaign_url",
+        "product_name",
+        "description",
         "original_price",
         "discount_price",
         "discount_percentage",
         "color",
-        "available_sizes",
-        "description",
+        "sizes_status",
     ]
+    _write_csv([product_dict], filepath, headers, append=True)
 
-    remaining_headers = [h for h in sorted(all_headers) if h not in preferred_order]
-    headers = [h for h in preferred_order if h in all_headers] + remaining_headers
 
-    with open(filepath, mode="w", newline="", encoding="utf-8") as f:
+def _write_csv(data_list, filepath, headers, append=False):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    file_exists = os.path.isfile(filepath)
+    mode = "a" if append else "w"
+    
+    with open(filepath, mode=mode, newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=headers, extrasaction="ignore")
-        writer.writeheader()
-
+        
+        # Escriure header si el fitxer és nou o si no estem en mode append
+        if not append or not file_exists or os.path.getsize(filepath) == 0:
+            writer.writeheader()
+            
         for item in data_list:
-            row = {header: item.get(header, "") for header in headers}
-            writer.writerow(row)
-
-    print(f"Dades desades correctament a: {filepath}")
+            writer.writerow(item)

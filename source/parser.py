@@ -254,6 +254,8 @@ def extract_sector_from_card(card):
         "[class*='category']",
         "[class*='sector']",
         "[class*='department']",
+        ".header-banner__label",  # Specific Privalia/Veepee label
+        ".campaign-card__info-sector",
     ]
 
     for selector in sector_selectors:
@@ -261,6 +263,13 @@ def extract_sector_from_card(card):
         text = get_text_from_node(node)
         if text:
             return text
+
+    # Si no es troba, intentar buscar text en majúscules petit que sovint és el sector
+    spans = card.find_all("span")
+    for s in spans:
+        t = get_text_from_node(s)
+        if t and 3 < len(t) < 15 and t.isupper():
+            return t
 
     return ""
 
@@ -567,7 +576,7 @@ def extract_sizes_from_detail(soup):
         "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"
     }
 
-    found_sizes = []
+    found_sizes = {}  # Usarem diccionari per guardar size -> status
 
     for selector in selectors:
         for node in soup.select(selector):
@@ -576,10 +585,29 @@ def extract_sizes_from_detail(soup):
                 continue
 
             cleaned = text.upper().strip()
-            if cleaned in common_sizes and cleaned not in found_sizes:
-                found_sizes.append(cleaned)
+            if cleaned in common_sizes:
+                # Determinar si està esgotat
+                classes = " ".join(node.get("class", []))
+                is_disabled = (
+                    node.get("disabled") is not None or
+                    "disabled" in classes or
+                    "unavailable" in classes or
+                    "out-of-stock" in classes or
+                    "is-sold-out" in classes
+                )
+                
+                status = "OUT" if is_disabled else "OK"
+                
+                # Si ja la tenim com OK, no la canviem a OUT (per si hi ha duplicats)
+                if cleaned not in found_sizes or found_sizes[cleaned] == "OUT":
+                    found_sizes[cleaned] = status
 
-    return ", ".join(found_sizes)
+    if not found_sizes:
+        return ""
+
+    # Retornar format S:OK, M:OUT...
+    sorted_sizes = sorted(found_sizes.items()) # Ordenació alfabètica/numèrica bàsica
+    return ", ".join([f"{s}:{stat}" for s, stat in sorted_sizes])
 
 
 def parse_product_detail_page(html_content, base_product_data):

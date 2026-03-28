@@ -249,7 +249,8 @@ class PrivaliaCrawler:
                     break
 
         if email_input is None:
-            self._save_debug_files("debug_login_no_email")
+            # En cas d'error crític, guardem sempre per saber què ha passat
+            self._save_debug_files("error_login_no_email")
             raise TimeoutException(
                 "No ha aparegut el camp de correu electrònic. Revisa debug/debug_login_no_email.*"
             )
