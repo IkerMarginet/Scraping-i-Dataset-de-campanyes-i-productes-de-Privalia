@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Virtual Environment
+venv/
+.venv/
+env/
+scripts/
+
+# Project specific
+# dataset/
+docs/imatges/
+debug/
+*.log
+*.html
+*.png
+
+# VS Code
+.vscode/
