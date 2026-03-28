@@ -14,7 +14,7 @@ env/
 scripts/
 
 # Project specific
-dataset/
+# dataset/
 docs/imatges/
 debug/
 *.log
