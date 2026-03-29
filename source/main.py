@@ -15,6 +15,7 @@ from parser import (
     parse_campaign_list,
     parse_product_list,
     parse_product_detail_page,
+    parse_campaign_subpages,
 )
 from storage import save_campaigns, save_product_incremental
 
@@ -98,14 +99,54 @@ def main():
                 debug_prefix=f"02_campaign_{camp_index}" if save_debug else None
             )
 
-            base_products = parse_product_list(camp_html, camp)
-            print(f"  Productes trobats: {len(base_products)}")
+            listing_pages = [{"url": camp_url, "label": "principal"}]
+            discovered_subpages = parse_campaign_subpages(camp_html, campaign_url=camp_url)
+            listing_pages.extend(discovered_subpages)
 
-            if not base_products:
+            print(f"  Subpàgines detectades: {len(discovered_subpages)}")
+            for subpage in discovered_subpages[:15]:
+                label = subpage.get("label", "") or "sense nom"
+                print(f"    - {label}: {subpage.get('url', '')}")
+
+            all_products = []
+            seen_product_urls = set()
+
+            for page_index, listing in enumerate(listing_pages, start=1):
+                listing_url = listing.get("url", "")
+                listing_label = listing.get("label", "") or f"subpagina_{page_index}"
+
+                if page_index == 1:
+                    listing_html = camp_html
+                else:
+                    print(f"  Obrint subpàgina [{page_index}/{len(listing_pages)}]: {listing_label}")
+                    listing_html = crawler.get_html(
+                        listing_url,
+                        wait_seconds=2,
+                        scroll=True,
+                        scroll_steps=5,
+                        debug_prefix=(f"02_campaign_{camp_index}_sub_{page_index}" if save_debug else None)
+                    )
+
+                page_products = parse_product_list(listing_html, camp)
+
+                for product in page_products:
+                    product["subcategory"] = listing_label
+                    prod_url = product.get("product_url", "")
+                    if not prod_url or prod_url in seen_product_urls:
+                        continue
+                    seen_product_urls.add(prod_url)
+                    all_products.append(product)
+
+                print(f"    Productes únics acumulats: {len(all_products)}")
+                time.sleep(REQUEST_DELAY_SECONDS)
+
+            print(f"  Productes totals trobats: {len(all_products)}")
+
+            if not all_products:
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
 
-            base_products_to_visit = base_products[:MAX_PRODUCTS_PER_CAMPAIGN_TO_VISIT]
+            base_products_to_visit = all_products[:MAX_PRODUCTS_PER_CAMPAIGN_TO_VISIT]
 
             for prod_index, product in enumerate(base_products_to_visit, start=1):
                 prod_url = product.get("product_url", "")
@@ -132,7 +173,8 @@ def main():
                     "discount_price": complete_data.get("discount_price", ""),
                     "discount_percentage": complete_data.get("discount_percentage", ""),
                     "color": complete_data.get("color", ""),
-                    "sizes_status": complete_data.get("available_sizes", "")
+                    "sizes_status": complete_data.get("available_sizes", ""),
+                    "subcategory": complete_data.get("subcategory", product.get("subcategory", ""))
                 }
 
                 print(

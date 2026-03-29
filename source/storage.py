@@ -27,6 +27,7 @@ def save_product_incremental(product_dict, filepath):
         "discount_percentage",
         "color",
         "sizes_status",
+        "subcategory",
     ]
     _write_csv([product_dict], filepath, headers, append=True)
 

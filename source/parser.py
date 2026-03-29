@@ -80,6 +80,40 @@ def looks_like_campaign_url(url):
     return any(pattern in url_lower for pattern in good_patterns)
 
 
+
+
+def looks_like_listing_url(url):
+    if not url or not is_valid_privalia_url(url) or is_bad_url(url):
+        return False
+
+    if looks_like_product_url(url):
+        return False
+
+    url_lower = url.lower()
+
+    good_patterns = [
+        "/catalog/",
+        "/campaign/",
+        "/sale/",
+        "/evento/",
+        "/brand/",
+        "/outlet/",
+        "/products",
+        "/productos",
+        "/all-products",
+        "/todos",
+        "/category/",
+        "/categoria/",
+        "?category=",
+        "&category=",
+        "?subcategory=",
+        "&subcategory=",
+        "?filter",
+        "&filter",
+    ]
+
+    return any(pattern in url_lower for pattern in good_patterns)
+
 def looks_like_product_url(url):
     if not url or not is_valid_privalia_url(url) or is_bad_url(url):
         return False
@@ -734,6 +768,70 @@ def parse_campaign_list(html_content):
 
     return campaigns
 
+
+
+def parse_campaign_subpages(html_content, campaign_url=""):
+    soup = BeautifulSoup(html_content, "html.parser")
+    subpages = []
+    seen = set()
+
+    def add(url, label=""):
+        final_url = absolute_url(url)
+        if not looks_like_listing_url(final_url):
+            return
+        if campaign_url and final_url.rstrip("/") == campaign_url.rstrip("/"):
+            return
+        if final_url in seen:
+            return
+        seen.add(final_url)
+        subpages.append({
+            "url": final_url,
+            "label": clean_text(label),
+        })
+
+    nav_selectors = [
+        "nav a[href]",
+        "aside a[href]",
+        "[role='navigation'] a[href]",
+        "[class*='category'] a[href]",
+        "[class*='Category'] a[href]",
+        "[class*='subcategory'] a[href]",
+        "[class*='Subcategory'] a[href]",
+        "[class*='filter'] a[href]",
+        "[class*='Filter'] a[href]",
+        "[class*='menu'] a[href]",
+        "[class*='Menu'] a[href]",
+        "[class*='tabs'] a[href]",
+        "[class*='Tabs'] a[href]",
+        "a[href*='/catalog/']",
+        "a[href*='/campaign/']",
+        "a[href*='/sale/']",
+        "a[href*='/brand/']",
+        "a[href*='category=']",
+        "a[href*='subcategory=']",
+        "a[href*='products']",
+        "a[href*='productos']",
+    ]
+
+    for selector in nav_selectors:
+        for anchor in soup.select(selector):
+            href = clean_text(anchor.get("href", ""))
+            text = get_text_from_node(anchor)
+            add(href, text)
+
+    # JSON incrustat: a vegades la navegació de categories no surt com a HTML estàtic
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text(" ", strip=True)
+        if not script_text:
+            continue
+
+        for match in re.findall(r'https://[^"\']+|/[^"\'\s<>]+', script_text):
+            candidate = clean_text(match)
+            if candidate.startswith("//"):
+                continue
+            add(candidate, "")
+
+    return subpages
 
 def parse_product_list(html_content, campaign_data):
     soup = BeautifulSoup(html_content, "html.parser")
