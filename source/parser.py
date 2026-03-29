@@ -515,48 +515,67 @@ def _choose_best_prices(pairs, discount_percentage):
     return best[0], best[1]
 
 
-def extract_campaign_name_from_card(card, anchor):
-    name_selectors = [
-        "[data-testid*='title']",
-        "[data-testid*='name']",
-        "[class*='title']",
-        "[class*='name']",
-        "[class*='brand']",
-        "h2",
-        "h3",
-        "h4",
-        "strong",
-        "span",
-        "img[alt]",
-    ]
+def _clean_alt_brand_name(text):
+    """Retorna el text complet del alt de la imatge, netejat."""
+    return clean_text(text)
 
+def extract_campaign_name_from_card(card, anchor):
+    # Prioritat 1: InfoBannerSubtitle (el nom de la marca explícit al requadre d'info)
+    name_selectors = [
+        "span[class*='InfoBannerSubtitle']",
+        "[class*='InfoBannerSubtitle']",
+    ]
     for selector in name_selectors:
         found = card.select_one(selector)
         if found:
-            if found.name == "img":
-                alt = get_attr(found, "alt")
-                if alt and len(alt) >= 2:
-                    return alt
             text = get_text_from_node(found)
             if text and len(text) >= 2:
-                return text
+                cleaned = clean_text(text)
+                # Si té més de 3 paraules, probablement és una descripció, no una marca
+                if len(cleaned.split()) <= 3:
+                    return cleaned
 
+    # Prioritat 2: imatge alt (sol ser "Marca Descripció" o "Marca Marca")
     if anchor:
         img = anchor.find("img")
         if img:
             alt = get_attr(img, "alt")
             if alt and len(alt) >= 2:
-                return alt
+                cleaned = _clean_alt_brand_name(alt)
+                if cleaned:
+                    return cleaned
 
+    # Prioritat 3: article[title] — Privalia hi posa el nom de la marca, però a vegades és genèric
+    article_title = get_attr(card, "title")
+    if article_title and "Banner #" not in article_title and len(article_title.strip()) > 1:
+        cleaned = clean_text(article_title)
+        if len(cleaned.split()) <= 3:
+            return cleaned
+
+    # Prioritat 4: Altres selectors genèrics
+    generic_selectors = [
+        "[data-testid*='title']",
+        "[data-testid*='name']",
+        "h2", "h3", "h4", "strong",
+    ]
+    for selector in generic_selectors:
+        found = card.select_one(selector)
+        if found:
+            text = get_text_from_node(found)
+            if text and len(text) >= 2:
+                cleaned = clean_text(text)
+                if len(cleaned.split()) <= 3:
+                    return cleaned
+
+    if anchor:
         title = get_attr(anchor, "title")
         if title and len(title) >= 2:
-            return title
-
-        anchor_text = get_text_from_node(anchor)
-        if anchor_text and len(anchor_text) >= 2:
-            return anchor_text
+            cleaned = clean_text(title)
+            if len(cleaned.split()) <= 3:
+                return cleaned
 
     return ""
+
 
 
 def extract_product_name_from_card(card, anchor):
@@ -693,7 +712,12 @@ def parse_campaign_list(html_content):
 
         name = extract_campaign_name_from_card(card, anchor)
         if not name or len(name) < 2:
-            continue
+            # Darrer recurs: extreure l'ID de catàleg de la URL
+            catalog_match = re.search(r"/catalog/(\d+)", full_url)
+            if catalog_match:
+                name = f"Campanya #{catalog_match.group(1)}"
+            else:
+                continue
 
         if full_url in seen_urls:
             continue
@@ -1036,7 +1060,35 @@ def _extract_color_from_json_scripts(soup):
     return ""
 
 
-def extract_color_from_detail(soup, fallback_name=""):
+def extract_all_colors_from_detail(soup, fallback_name=""):
+    """Extreu TOTS els colors disponibles a partir dels thumbnails de variació.
+    Format: 'azul y verde | malva | azul' (un per variant).
+    Si no hi ha variants, fa fallback a extract_color_from_detail.
+    """
+    colors = []
+    seen = set()
+
+    # Estructura: data-testid="variation-item-{sku}" > a > img[alt]
+    for item in soup.find_all(attrs={"data-testid": re.compile(r"^variation-item-\d+$")}):
+        img = item.find("img", alt=True)
+        if not img:
+            continue
+        alt = clean_text(img.get("alt", ""))
+        if not alt:
+            continue
+        # L'alt tés forma "Nom - material - regular fit - color"
+        # El color és l'ultima part després del darrer ' - '
+        parts = [p.strip() for p in alt.split(" - ") if p.strip()]
+        if len(parts) >= 2:
+            color = parts[-1]
+            if not _is_bad_color_candidate(color) and color not in seen:
+                colors.append(color)
+                seen.add(color)
+
+    if colors:
+        return " | ".join(colors)
+
+    # Fallback: extracció simple del color actual (de la variant seleccionada)
     for fn in (
         _extract_color_from_label_value_blocks,
         _extract_color_from_semantic_blocks,
@@ -1060,6 +1112,7 @@ def extract_color_from_detail(soup, fallback_name=""):
     return ""
 
 
+
 def _size_status_from_node(node, text=""):
     raw = " ".join([
         get_text_from_node(node),
@@ -1071,7 +1124,13 @@ def _size_status_from_node(node, text=""):
     ]).lower()
     raw += " " + str(text).lower()
     out_words = ["agotado", "sold out", "sin stock", "unavailable", "no disponible", "out of stock", "disabled"]
-    return "OUT" if any(w in raw for w in out_words) else "OK"
+    almost_words = ["agotándose", "agotandose", "últimas unidades", "ultimas unidades",
+                    "casi agotado", "low stock", "last items", "quedan pocas"]
+    if any(w in raw for w in out_words):
+        return "OUT"
+    if any(w in raw for w in almost_words):
+        return "ALMOST"
+    return "OK"
 
 
 def _extract_size_tokens(text):
@@ -1259,7 +1318,7 @@ def parse_product_detail_page(html_content, base_product_data):
     detail_product["discount_price"] = discount_price
     detail_product["discount_percentage"] = discount_percentage
 
-    detail_product["color"] = extract_color_from_detail(soup, fallback_name=detail_product.get("product_name", ""))
+    detail_product["color"] = extract_all_colors_from_detail(soup, fallback_name=detail_product.get("product_name", ""))
     detail_product["available_sizes"] = extract_sizes_from_detail(soup)
 
     return detail_product

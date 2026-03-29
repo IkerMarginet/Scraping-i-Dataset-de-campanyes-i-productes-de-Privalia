@@ -34,11 +34,13 @@ def main():
 
     crawler = PrivaliaCrawler()
 
-    if os.path.exists(PRODUCTS_CSV):
-        try:
-            os.remove(PRODUCTS_CSV)
-        except Exception:
-            pass
+    # Netejar fitxers anteriors per començar de zero en aquesta sessió
+    for csv_file in [PRODUCTS_CSV, CAMPAIGNS_CSV]:
+        if os.path.exists(csv_file):
+            try:
+                os.remove(csv_file)
+            except Exception:
+                pass
 
     try:
         crawler.login()
@@ -48,6 +50,7 @@ def main():
             BASE_URL,
             wait_seconds=5,
             scroll=True,
+            scroll_steps=15,
             debug_prefix="01_home_after_login" if save_debug else None
         )
 
@@ -89,8 +92,9 @@ def main():
 
             camp_html = crawler.get_html(
                 camp_url,
-                wait_seconds=5,
+                wait_seconds=2,
                 scroll=True,
+                scroll_steps=5,
                 debug_prefix=f"02_campaign_{camp_index}" if save_debug else None
             )
 
@@ -112,7 +116,7 @@ def main():
 
                 prod_html = crawler.get_html(
                     prod_url,
-                    wait_seconds=4,
+                    wait_seconds=2,
                     scroll=False,
                     debug_prefix=f"03_product_{camp_index}_{prod_index}" if save_debug else None
                 )

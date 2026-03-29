@@ -108,21 +108,19 @@ class PrivaliaCrawler:
         self.driver.switch_to.default_content()
         return None
 
-    def _scroll_page(self, max_scrolls=8, pause=1.2):
-        last_height = self.driver.execute_script("return document.body.scrollHeight")
+    def _scroll_page(self, max_scrolls=15, step=800, pause=0.8):
+        """Scroll incremental per activar el lazy loading de cada secció."""
+        current_pos = 0
         for _ in range(max_scrolls):
-            self.driver.execute_script(
-                "window.scrollTo(0, document.body.scrollHeight);"
-            )
+            current_pos += step
+            self.driver.execute_script(f"window.scrollTo(0, {current_pos});")
             time.sleep(pause)
-
-            new_height = self.driver.execute_script("return document.body.scrollHeight")
-            if new_height == last_height:
+            page_height = self.driver.execute_script("return document.body.scrollHeight")
+            if current_pos >= page_height:
                 break
-            last_height = new_height
-
+        # Tornar al principi
         self.driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(0.8)
+        time.sleep(0.5)
 
     def login(self):
         if not PRIVALIA_EMAIL or not PRIVALIA_PASSWORD:
@@ -295,13 +293,13 @@ class PrivaliaCrawler:
         time.sleep(6)
         self.driver.switch_to.default_content()
 
-    def get_html(self, url, wait_seconds=4, scroll=False, debug_prefix=None):
+    def get_html(self, url, wait_seconds=2, scroll=False, scroll_steps=5, debug_prefix=None):
         print(f"S'està navegant a: {url}")
         self.driver.get(url)
         time.sleep(wait_seconds)
 
         if scroll:
-            self._scroll_page()
+            self._scroll_page(max_scrolls=scroll_steps)
 
         html = self.driver.page_source
 
