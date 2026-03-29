@@ -856,90 +856,393 @@ def extract_prices_from_detail(soup):
     return _format_price(original_price), _format_price(discount_price), discount_percentage
 
 
-def extract_color_from_detail(soup):
-    selectors = [
-        "[data-testid*='color']",
-        "[class*='color']",
-        "[class*='variant']",
-    ]
+def _is_bad_color_candidate(value):
+    if not value:
+        return True
 
-    for selector in selectors:
-        for node in soup.select(selector):
-            text = get_text_from_node(node)
-            if not text:
-                continue
+    v = clean_text(value)
+    if not v:
+        return True
 
-            match = re.search(
-                r"(?:color|colores|colour)[:\s]+([a-zA-ZÀ-ÿ0-9 \-/,]+)",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if match:
-                candidate = clean_text(match.group(1))
-                if not re.fullmatch(r"[\d\s,.\-]+", candidate):
-                    return candidate
+    vl = v.lower()
+    bad_exact = {
+        "menu", "color", "colour", "colores", "selecciona", "elige", "elige tu modelo",
+        "escoge tu talla", "escoge", "talla", "modelo", "wishlist", "favoritos"
+    }
+    if vl in bad_exact:
+        return True
 
-    page_text = clean_text(soup.get_text(" ", strip=True))
-    match = re.search(
-        r"(?:color|colores|colour)[:\s]+([a-zA-ZÀ-ÿ0-9 \-/,]+)",
-        page_text,
-        flags=re.IGNORECASE,
-    )
-    if match:
-        candidate = clean_text(match.group(1))
-        if not re.fullmatch(r"[\d\s,.\-]+", candidate):
+    if len(v) > 40:
+        return True
+
+    if "http" in vl or "€" in v:
+        return True
+
+    if re.fullmatch(r"#[0-9a-fA-F]{3,8}", v):
+        return True
+
+    if any(tok in vl for tok in ["rgb(", "rgba(", "hsl(", "hsla(", "var(", "--"]):
+        return True
+
+    if " - " in v and len(v.split(" - ")) >= 3:
+        return True
+
+    if re.fullmatch(r"[\d\s,./%-]+", v):
+        return True
+
+    return False
+
+
+def _extract_color_from_product_name(name):
+    if not name:
+        return ""
+
+    parts = [clean_text(x) for x in str(name).split(" - ") if clean_text(x)]
+    if len(parts) >= 2:
+        candidate = parts[-1]
+        if not _is_bad_color_candidate(candidate):
             return candidate
 
     return ""
 
 
-def extract_sizes_from_detail(soup):
-    selectors = [
-        "[data-testid*='size']",
-        "[data-testid*='sizes']",
-        "[class*='size']",
-        "[class*='sizes']",
-        "select option",
-        "button",
-        "li",
-        "span",
-    ]
+def _extract_color_from_label_value_blocks(soup):
+    labels = {"color", "colour", "colores"}
 
-    common_sizes = {
-        "XXS", "XS", "S", "M", "L", "XL", "XXL", "XXXL",
-        "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46"
-    }
+    for node in soup.find_all(["div", "span", "p", "dt", "strong", "label", "h2", "h3", "h4"]):
+        label_text = clean_text(node.get_text(" ", strip=True)).rstrip(":").lower()
+        if label_text not in labels:
+            continue
 
-    found_sizes = {}
+        for sib in list(node.next_siblings)[:5]:
+            if getattr(sib, "name", None):
+                txt = clean_text(sib.get_text(" ", strip=True))
+            else:
+                txt = clean_text(str(sib))
+            if txt and not _is_bad_color_candidate(txt):
+                return txt
 
-    for selector in selectors:
-        for node in soup.select(selector):
-            text = get_text_from_node(node)
-            if not text or len(text) > 20:
+        parent = node.parent
+        if parent:
+            texts = [clean_text(t) for t in parent.stripped_strings]
+            try:
+                idx = next(i for i, t in enumerate(texts) if t.rstrip(":").lower() in labels)
+                for candidate in texts[idx + 1 : idx + 4]:
+                    if candidate and not _is_bad_color_candidate(candidate):
+                        return candidate
+            except StopIteration:
+                pass
+
+    return ""
+
+
+def _extract_color_from_semantic_blocks(soup):
+    labels = {"color", "colour", "colores"}
+    candidates = []
+
+    for text_node in soup.find_all(string=True):
+        label_text = clean_text(text_node)
+        if label_text.rstrip(":").lower() not in labels:
+            continue
+
+        parent = getattr(text_node, "parent", None)
+        if not parent:
+            continue
+
+        container = parent.parent if getattr(parent, "parent", None) else parent
+        texts = [clean_text(t) for t in container.stripped_strings]
+        try:
+            idx = next(i for i, t in enumerate(texts) if t.rstrip(":").lower() in labels)
+        except StopIteration:
+            idx = -1
+
+        if idx >= 0:
+            for candidate in texts[idx + 1 : idx + 5]:
+                if candidate and not _is_bad_color_candidate(candidate):
+                    candidates.append(candidate)
+
+    if candidates:
+        candidates = sorted(_dedupe_keep_order(candidates), key=lambda x: (len(x), x))
+        return candidates[0]
+    return ""
+
+
+def _extract_color_from_attributes(soup):
+    attrs = ["data-color", "data-colour"]
+
+    for node in soup.find_all(True):
+        for attr in attrs:
+            raw = clean_text(node.get(attr, ""))
+            if raw and not _is_bad_color_candidate(raw):
+                return raw
+
+        for attr in ["aria-label", "title"]:
+            raw = clean_text(node.get(attr, ""))
+            if not raw:
                 continue
+            m = re.search(r"(?:^|\b)(?:color|colour|colores)[:\s-]+([^|;,]+)", raw, flags=re.I)
+            if m:
+                candidate = clean_text(m.group(1))
+                if not _is_bad_color_candidate(candidate):
+                    return candidate
 
-            cleaned = text.upper().strip()
-            if cleaned in common_sizes:
-                classes = " ".join(node.get("class", []))
-                is_disabled = (
-                    node.get("disabled") is not None or
-                    "disabled" in classes or
-                    "unavailable" in classes or
-                    "out-of-stock" in classes or
-                    "is-sold-out" in classes
-                )
+        text = get_text_from_node(node)
+        if text and len(text) <= 30:
+            m = re.search(r"(?:^|\b)(?:color|colour|colores)[:\s-]+([^|;,]+)", text, flags=re.I)
+            if m:
+                candidate = clean_text(m.group(1))
+                if not _is_bad_color_candidate(candidate):
+                    return candidate
 
-                status = "OUT" if is_disabled else "OK"
+    return ""
 
-                if cleaned not in found_sizes or found_sizes[cleaned] == "OUT":
-                    found_sizes[cleaned] = status
+
+def _extract_color_from_json_scripts(soup):
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text("\n", strip=True)
+        if not script_text:
+            continue
+        lowered = script_text.lower()
+        if not any(k in lowered for k in ["color", "colour"]):
+            continue
+
+        parsed = []
+        stype = (script.get("type") or "").lower()
+        if "json" in stype:
+            try:
+                parsed.append(json.loads(script_text))
+            except Exception:
+                pass
+
+        if not parsed:
+            for match in re.findall(r"\{.*?\}", script_text, flags=re.DOTALL):
+                if "color" not in match.lower() and "colour" not in match.lower():
+                    continue
+                try:
+                    parsed.append(json.loads(match))
+                except Exception:
+                    continue
+
+        for obj in parsed:
+            for item in _walk_json(obj):
+                if not isinstance(item, dict):
+                    continue
+                for key, value in item.items():
+                    kl = str(key).lower()
+                    if kl in {"color", "colour", "colore", "colorname"}:
+                        candidate = clean_text(value)
+                        if not _is_bad_color_candidate(candidate):
+                            return candidate
+    return ""
+
+
+def extract_color_from_detail(soup, fallback_name=""):
+    for fn in (
+        _extract_color_from_label_value_blocks,
+        _extract_color_from_semantic_blocks,
+    ):
+        candidate = fn(soup)
+        if candidate:
+            return candidate
+
+    candidate = _extract_color_from_product_name(fallback_name)
+    if candidate:
+        return candidate
+
+    for fn in (
+        _extract_color_from_attributes,
+        _extract_color_from_json_scripts,
+    ):
+        candidate = fn(soup)
+        if candidate:
+            return candidate
+
+    return ""
+
+
+def _size_status_from_node(node, text=""):
+    raw = " ".join([
+        get_text_from_node(node),
+        get_attr(node, "class"),
+        get_attr(node, "aria-label"),
+        get_attr(node, "title"),
+        get_attr(node, "disabled"),
+        get_attr(node, "aria-disabled"),
+    ]).lower()
+    raw += " " + str(text).lower()
+    out_words = ["agotado", "sold out", "sin stock", "unavailable", "no disponible", "out of stock", "disabled"]
+    return "OUT" if any(w in raw for w in out_words) else "OK"
+
+
+def _extract_size_tokens(text):
+    if not text:
+        return []
+
+    txt = clean_text(text)
+    if not txt:
+        return []
+
+    upper = txt.upper()
+    results = []
+
+    for m in re.finditer(r"\b(\d{1,2})\s*\((?:ES|EU|UK|US)\)\s*-\s*\1\s*\((?:ES|EU|UK|US)\)\b", upper):
+        token = m.group(1)
+        if token not in results:
+            results.append(token)
+
+    for m in re.finditer(r"\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b", upper):
+        token = m.group(1)
+        if token not in results:
+            results.append(token)
+
+    for m in re.finditer(r"\b(1\d|2\d|3\d|4\d|50|51|52)\b", upper):
+        token = m.group(1)
+        context = upper[max(0, m.start() - 12) : m.end() + 12]
+        if any(x in context for x in ["€", "%", ".", ","]):
+            continue
+        if token and token not in results:
+            results.append(token)
+
+    return results
+
+
+def _extract_sizes_from_json_scripts(soup):
+    found = {}
+    relevant_keys = {"size", "sizes", "talla", "tallas", "label", "name", "value"}
+
+    for script in soup.find_all("script"):
+        script_text = script.string or script.get_text("\n", strip=True)
+        if not script_text:
+            continue
+        lowered = script_text.lower()
+        if not any(k in lowered for k in ["size", "sizes", "talla", "tallas"]):
+            continue
+
+        parsed = []
+        stype = (script.get("type") or "").lower()
+        if "json" in stype:
+            try:
+                parsed.append(json.loads(script_text))
+            except Exception:
+                pass
+
+        for obj in parsed:
+            for item in _walk_json(obj):
+                if not isinstance(item, dict):
+                    continue
+
+                text_candidates = []
+                for key, value in item.items():
+                    if str(key).lower() in relevant_keys and isinstance(value, (str, int, float)):
+                        text_candidates.append(str(value))
+
+                status = "OK"
+                for key, value in item.items():
+                    kl = str(key).lower()
+                    if kl in {"available", "availability", "in_stock", "instock", "isavailable"}:
+                        sv = str(value).lower()
+                        if sv in {"false", "0", "outofstock", "out_of_stock", "soldout"}:
+                            status = "OUT"
+
+                for txt in text_candidates:
+                    for size in _extract_size_tokens(txt):
+                        if size not in found or found[size] == "OUT":
+                            found[size] = status
+
+    return found
+
+
+def _find_size_area_nodes(soup):
+    area_nodes = []
+    seen = set()
+
+    def add(node):
+        if not node:
+            return
+        node_id = id(node)
+        if node_id not in seen:
+            area_nodes.append(node)
+            seen.add(node_id)
+
+    for selector in ["select", "[role='listbox']", "[role='option']", "option"]:
+        for node in soup.select(selector):
+            add(node)
+            add(node.parent)
+            add(getattr(node.parent, "parent", None))
+
+    size_words = {"talla", "tallas", "size", "sizes", "elige tu modelo", "selecciona tu talla", "selecciona talla"}
+    for node in soup.find_all(["div", "span", "label", "p", "strong", "h2", "h3", "h4"]):
+        txt = clean_text(node.get_text(" ", strip=True)).lower()
+        if txt in size_words:
+            add(node.parent)
+            add(getattr(node.parent, "parent", None))
+
+    return [n for n in area_nodes if n]
+
+
+def extract_sizes_from_detail(soup):
+    found_sizes = {}
+    areas = _find_size_area_nodes(soup)
+
+    candidate_nodes = []
+    seen = set()
+    selectors = ["option", "[role='option']", "li", "button", "label", "span", "div"]
+
+    for area in areas:
+        for selector in selectors:
+            for node in area.select(selector):
+                node_id = id(node)
+                if node_id not in seen:
+                    candidate_nodes.append(node)
+                    seen.add(node_id)
+
+    for node in candidate_nodes:
+        texts = [
+            get_text_from_node(node),
+            get_attr(node, "value"),
+            get_attr(node, "aria-label"),
+            get_attr(node, "title"),
+            get_attr(node, "data-value"),
+            get_attr(node, "data-label"),
+            get_attr(node, "data-size"),
+        ]
+        combined = " | ".join([t for t in texts if t])
+        if not combined:
+            continue
+
+        upper = combined.upper()
+        if any(bad in upper for bad in ["ELIGE TU MODELO", "SELECCIONA", "COLOR", "MENU"]):
+            continue
+
+        sizes = _extract_size_tokens(combined)
+        if not sizes:
+            continue
+
+        numeric_sizes = [s for s in sizes if s.isdigit()]
+        if len(set(numeric_sizes)) > 5 and node.name in {"div", "span"}:
+            continue
+
+        status = _size_status_from_node(node, combined)
+        for size in sizes:
+            if size not in found_sizes or found_sizes[size] == "OUT":
+                found_sizes[size] = status
+
+    if not found_sizes:
+        for size, status in _extract_sizes_from_json_scripts(soup).items():
+            if size not in found_sizes or found_sizes[size] == "OUT":
+                found_sizes[size] = status
 
     if not found_sizes:
         return ""
 
-    sorted_sizes = sorted(found_sizes.items())
-    return ", ".join([f"{s}:{stat}" for s, stat in sorted_sizes])
+    def sort_key(item):
+        s = item[0]
+        if s.isdigit():
+            return (0, int(s))
+        return (1, s)
 
+    sorted_sizes = sorted(found_sizes.items(), key=sort_key)
+    return ", ".join([f"{s}:{stat}" for s, stat in sorted_sizes])
 
 def parse_product_detail_page(html_content, base_product_data):
     soup = BeautifulSoup(html_content, "html.parser")
@@ -956,7 +1259,7 @@ def parse_product_detail_page(html_content, base_product_data):
     detail_product["discount_price"] = discount_price
     detail_product["discount_percentage"] = discount_percentage
 
-    detail_product["color"] = extract_color_from_detail(soup)
+    detail_product["color"] = extract_color_from_detail(soup, fallback_name=detail_product.get("product_name", ""))
     detail_product["available_sizes"] = extract_sizes_from_detail(soup)
 
     return detail_product
