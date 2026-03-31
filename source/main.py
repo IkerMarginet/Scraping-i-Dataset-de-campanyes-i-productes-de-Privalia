@@ -175,10 +175,9 @@ def main():
                 if not prod_url.startswith("http"):
                     continue
 
-                prod_html = crawler.get_html(
+                prod_html = crawler.get_product_html_with_interaction(
                     prod_url,
                     wait_seconds=2,
-                    scroll=False,
                     debug_prefix=f"03_product_{camp_index}_{prod_index}" if save_debug else None
                 )
 

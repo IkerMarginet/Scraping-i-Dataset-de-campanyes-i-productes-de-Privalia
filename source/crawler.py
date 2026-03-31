@@ -308,6 +308,61 @@ class PrivaliaCrawler:
 
         return html
 
+    def get_product_html_with_interaction(self, url, wait_seconds=3, debug_prefix=None):
+        """Navega al producte i clica el desplegable de talles per carregar-les."""
+        print(f" -> [Interactuant] {url}")
+        self.driver.get(url)
+        time.sleep(wait_seconds)
+
+        # Intentar clicar el desplegable de talles
+        dropdown_selectors = [
+            (By.CSS_SELECTOR, "button[data-testid^='model-dropdown-']"),
+            (By.CSS_SELECTOR, "button[role='combobox']"),
+            (By.CSS_SELECTOR, "div[class*='ModelDropdown'] button"),
+            (By.XPATH, "//button[contains(., 'Elige una talla') or contains(., 'Selecciona')]"),
+        ]
+
+        found_dropdown = None
+        for by, selector in dropdown_selectors:
+            try:
+                el = WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                if el.is_displayed():
+                    found_dropdown = el
+                    print(f"    [INFO] Botó trobat amb: {selector}")
+                    break
+            except Exception:
+                continue
+
+        if found_dropdown:
+            try:
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", found_dropdown)
+                time.sleep(0.5)
+                # Intentar clic directe i si falla JS click
+                try:
+                    found_dropdown.click()
+                except Exception:
+                    self.driver.execute_script("arguments[0].click();", found_dropdown)
+                
+                print("    [OK] Desplegable clicat.")
+                
+                # Esperar que apareguin els elements de la llista
+                WebDriverWait(self.driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "li[role='option'], [data-testid^='model-']"))
+                )
+                time.sleep(1.5) # Temps per a les animacions i JS
+                print("    [OK] Talles detectades al DOM.")
+            except Exception as e:
+                print(f"    [AVÍS] Error en clicar o esperar talles: {e}")
+        else:
+            print("    [AVÍS] No s'ha trobat cap botó de talles (potser talla única).")
+
+        html = self.driver.page_source
+        if debug_prefix:
+            self._save_debug_files(debug_prefix)
+        return html
+
     def close(self):
         if self.driver:
             try:

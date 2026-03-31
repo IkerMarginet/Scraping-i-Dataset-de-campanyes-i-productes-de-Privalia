@@ -1220,11 +1220,25 @@ def _size_status_from_node(node, text=""):
         get_attr(node, "aria-disabled"),
     ]).lower()
     raw += " " + str(text).lower()
+    
+    # Lògica específica de Privalia: la presència de la classe 'hczgyp' indica disponibilitat.
+    # Si no hi és, és molt probable que la talla estigui esgotada.
+    classes = get_attr(node, "class").lower()
+    is_li_option = node.name == "li" or "option" in get_attr(node, "role").lower()
+    
     out_words = ["agotado", "sold out", "sin stock", "unavailable", "no disponible", "out of stock", "disabled"]
-    almost_words = ["agotándose", "agotandose", "últimas unidades", "ultimas unidades",
-                    "casi agotado", "low stock", "last items", "quedan pocas"]
+    
+    if is_li_option and "hczgyp" not in classes:
+        return "OUT"
+        
     if any(w in raw for w in out_words):
         return "OUT"
+        
+    last_words = ["último producto", "ultimo producto", "última unidad", "ultima unidad"]
+    almost_words = ["agotándose", "agotandose", "últimas unidades", "ultimas unidades",
+                    "casi agotado", "low stock", "last items", "quedan pocas", "están agotándose", "estan agotandose"]
+    if any(w in raw for w in last_words):
+        return "LAST"
     if any(w in raw for w in almost_words):
         return "ALMOST"
     return "OK"
@@ -1241,16 +1255,31 @@ def _extract_size_tokens(text):
     upper = txt.upper()
     results = []
 
-    for m in re.finditer(r"\b(\d{1,2})\s*\((?:ES|EU|UK|US)\)\s*-\s*\1\s*\((?:ES|EU|UK|US)\)\b", upper):
+    # Regions a cercar: ES, EU, UK, US, IT, FR, DE, etc.
+    regions_re = r"(?:ES|EU|UK|US|IT|FR|DE|MX|BR|INT)"
+
+    # 1. Patró: "40 (EU) - 40 (ES)" o "M (IT) - M (ES)"
+    # Aquest format de talla és el més habitual a la plataforma.
+    pattern1 = rf"\b([A-Z\d/]+)\s*\({regions_re}\)\s*-\s*\1\s*\({regions_re}\)\b"
+    for m in re.finditer(pattern1, upper):
+        token = m.group(1)
+        if token and token not in results:
+            results.append(token)
+
+    # 2. Patró: "40 (EU)" o "S (ES)" sol
+    pattern2 = rf"\b([A-Z\d/]+)\s*\({regions_re}\)\b"
+    for m in re.finditer(pattern2, upper):
+        token = m.group(1)
+        if token and token not in results:
+            results.append(token)
+
+    # 3. Lletres estàndard (S, M, L, etc.)
+    for m in re.finditer(r"\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL|UNITALLA|ONE SIZE|TU)\b", upper):
         token = m.group(1)
         if token not in results:
             results.append(token)
 
-    for m in re.finditer(r"\b(XXXS|XXS|XS|S|M|L|XL|XXL|XXXL)\b", upper):
-        token = m.group(1)
-        if token not in results:
-            results.append(token)
-
+    # 4. Números sols (si no semblen preus o percentatges)
     for m in re.finditer(r"\b(1\d|2\d|3\d|4\d|50|51|52)\b", upper):
         token = m.group(1)
         context = upper[max(0, m.start() - 12) : m.end() + 12]
@@ -1342,15 +1371,38 @@ def extract_sizes_from_detail(soup):
 
     candidate_nodes = []
     seen = set()
-    selectors = ["option", "[role='option']", "li", "button", "label", "span", "div"]
+    
+    # Selectors en ordre de especificitat (preferir fills sobre pares)
+    item_selectors = ["option", "[role='option']", "li", "button"]
+    container_selectors = ["label", "span", "div"]
 
+    # 1. Primer busquem elements que siguin clarament "items" individuals
     for area in areas:
-        for selector in selectors:
+        for selector in item_selectors:
             for node in area.select(selector):
                 node_id = id(node)
                 if node_id not in seen:
                     candidate_nodes.append(node)
                     seen.add(node_id)
+    
+    # 2. Si no hem trobat res amb els selectors de dalt, busquem més genèrics
+    # Però evitem afegir contenidors que ja hem processat com a fills
+    if not candidate_nodes:
+        for area in areas:
+            for selector in container_selectors:
+                for node in area.select(selector):
+                    node_id = id(node)
+                    if node_id not in seen:
+                        candidate_nodes.append(node)
+                        seen.add(node_id)
+
+    # Definir prioritat d'estats (més alt = més prioritari)
+    status_priority = {
+        "OUT": 4,
+        "LAST": 3,
+        "ALMOST": 2,
+        "OK": 1
+    }
 
     for node in candidate_nodes:
         texts = [
@@ -1380,12 +1432,15 @@ def extract_sizes_from_detail(soup):
 
         status = _size_status_from_node(node, combined)
         for size in sizes:
-            if size not in found_sizes or found_sizes[size] == "OUT":
+            current_prio = status_priority.get(found_sizes.get(size), 0)
+            new_prio = status_priority.get(status, 0)
+            
+            if size not in found_sizes or new_prio > current_prio:
                 found_sizes[size] = status
 
     if not found_sizes:
         for size, status in _extract_sizes_from_json_scripts(soup).items():
-            if size not in found_sizes or found_sizes[size] == "OUT":
+            if size not in found_sizes:
                 found_sizes[size] = status
 
     if not found_sizes:
