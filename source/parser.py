@@ -64,6 +64,34 @@ def is_bad_url(url):
     return any(pattern in url_lower for pattern in bad_patterns)
 
 
+def extract_id_from_url(url):
+    if not url:
+        return ""
+    
+    # Try to find numeric ID at the end or in a segment
+    # Patterns like /catalog/12345 or /campaign/any-name-12345
+    match = re.search(r"/(\d+)/?$", url)
+    if match:
+        return match.group(1)
+    
+    # Try pattern like /catalog/12345/something
+    match = re.search(r"/(?:catalog|campaign|sale|evento|brand|outlet)/([^/?#]+)", url)
+    if match:
+        segment = match.group(1)
+        # If segment ends with -ID, extract ID
+        sub_match = re.search(r"-(\d+)$", segment)
+        if sub_match:
+            return sub_match.group(1)
+        return segment
+    
+    # Fallback to last segment of path
+    path = urlparse(url).path.strip("/")
+    if path:
+        return path.split("/")[-1]
+    
+    return ""
+
+
 def looks_like_campaign_url(url):
     if not url or not is_valid_privalia_url(url) or is_bad_url(url):
         return False
@@ -657,30 +685,6 @@ def extract_product_name_from_card(card, anchor):
     return ""
 
 
-def extract_sector_from_card(card):
-    sector_selectors = [
-        "[data-testid*='category']",
-        "[data-testid*='sector']",
-        "[class*='category']",
-        "[class*='sector']",
-        "[class*='department']",
-        ".header-banner__label",
-        ".campaign-card__info-sector",
-    ]
-
-    for selector in sector_selectors:
-        node = card.select_one(selector)
-        text = get_text_from_node(node)
-        if text:
-            return text
-
-    spans = card.find_all("span")
-    for s in spans:
-        t = get_text_from_node(s)
-        if t and 3 < len(t) < 15 and t.isupper():
-            return t
-
-    return ""
 
 
 def extract_end_date_from_card(card):
@@ -760,7 +764,6 @@ def parse_campaign_list(html_content):
             {
                 "name": name,
                 "url": full_url,
-                "sector": extract_sector_from_card(card),
                 "end_date": extract_end_date_from_card(card),
             }
         )
@@ -779,15 +782,37 @@ def parse_campaign_subpages(html_content, campaign_url=""):
         final_url = absolute_url(url)
         if not looks_like_listing_url(final_url):
             return
-        if campaign_url and final_url.rstrip("/") == campaign_url.rstrip("/"):
-            return
-        if final_url in seen:
-            return
-        seen.add(final_url)
         subpages.append({
             "url": final_url,
             "label": clean_text(label),
         })
+
+    # 1. Explorar el CatalogTree (menú lateral oficial)
+    catalog_tree = soup.find(["ul", "nav"], attrs={"data-testid": "CatalogTree"})
+    if not catalog_tree:
+        # Fallback: buscar per facil-iti o classes
+        catalog_tree = soup.find(attrs={"data-facil-iti": "catalog--tree-links"})
+        
+    if catalog_tree:
+        for li in catalog_tree.find_all("li"):
+            anchor = li.find("a", href=True)
+            if anchor:
+                # Categoria normal amb link
+                href = anchor.get("href", "")
+                # Prioritzem el data-testid de l'enllaç si existeix, o el text
+                label = clean_text(anchor.get_text(" ", strip=True))
+                add(href, label)
+            else:
+                # Categoria ACTIVA (sense link)
+                label = clean_text(li.get_text(" ", strip=True))
+                if label and campaign_url:
+                    # L'afegim al principi com a activa
+                    if campaign_url not in seen:
+                        subpages.insert(0, {
+                            "url": absolute_url(campaign_url),
+                            "label": label
+                        })
+                        seen.add(absolute_url(campaign_url))
 
     nav_selectors = [
         "nav a[href]",
@@ -795,22 +820,8 @@ def parse_campaign_subpages(html_content, campaign_url=""):
         "[role='navigation'] a[href]",
         "[class*='category'] a[href]",
         "[class*='Category'] a[href]",
-        "[class*='subcategory'] a[href]",
-        "[class*='Subcategory'] a[href]",
-        "[class*='filter'] a[href]",
-        "[class*='Filter'] a[href]",
-        "[class*='menu'] a[href]",
-        "[class*='Menu'] a[href]",
-        "[class*='tabs'] a[href]",
-        "[class*='Tabs'] a[href]",
         "a[href*='/catalog/']",
         "a[href*='/campaign/']",
-        "a[href*='/sale/']",
-        "a[href*='/brand/']",
-        "a[href*='category=']",
-        "a[href*='subcategory=']",
-        "a[href*='products']",
-        "a[href*='productos']",
     ]
 
     for selector in nav_selectors:
@@ -818,18 +829,6 @@ def parse_campaign_subpages(html_content, campaign_url=""):
             href = clean_text(anchor.get("href", ""))
             text = get_text_from_node(anchor)
             add(href, text)
-
-    # JSON incrustat: a vegades la navegació de categories no surt com a HTML estàtic
-    for script in soup.find_all("script"):
-        script_text = script.string or script.get_text(" ", strip=True)
-        if not script_text:
-            continue
-
-        for match in re.findall(r'https://[^"\']+|/[^"\'\s<>]+', script_text):
-            candidate = clean_text(match)
-            if candidate.startswith("//"):
-                continue
-            add(candidate, "")
 
     return subpages
 
@@ -1401,6 +1400,32 @@ def extract_sizes_from_detail(soup):
     sorted_sizes = sorted(found_sizes.items(), key=sort_key)
     return ", ".join([f"{s}:{stat}" for s, stat in sorted_sizes])
 
+def extract_image_from_detail(soup):
+    # Intentar og:image primer (estàndard SEO)
+    og_image = soup.find("meta", property="og:image")
+    if og_image and og_image.get("content"):
+        return og_image["content"]
+
+    # Buscar la imatge principal del producte
+    image_selectors = [
+        "[data-testid*='product-image']",
+        "[class*='ProductImage'] img",
+        "[class*='MainImage'] img",
+        ".styles__VariationThumbnail-groot__sc-cfcf0da0-3",
+        "img[data-testid*='variation-item']",
+        ".styles__MainImg-groot__sc-80bee9f7-1",
+        "img[src*='media.veepee.com']"
+    ]
+
+    for selector in image_selectors:
+        img = soup.select_one(selector)
+        if img:
+            src = get_attr(img, "src") or get_attr(img, "data-src")
+            if src:
+                return src
+
+    return ""
+
 def parse_product_detail_page(html_content, base_product_data):
     soup = BeautifulSoup(html_content, "html.parser")
     detail_product = base_product_data.copy()
@@ -1417,6 +1442,7 @@ def parse_product_detail_page(html_content, base_product_data):
     detail_product["discount_percentage"] = discount_percentage
 
     detail_product["color"] = extract_all_colors_from_detail(soup, fallback_name=detail_product.get("product_name", ""))
-    detail_product["available_sizes"] = extract_sizes_from_detail(soup)
+    detail_product["image_url"] = extract_image_from_detail(soup)
+    detail_product["sizes_status"] = extract_sizes_from_detail(soup)
 
     return detail_product

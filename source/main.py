@@ -7,6 +7,7 @@ from config import (
     CAMPAIGNS_CSV,
     PRODUCTS_CSV,
     MAX_CAMPAIGNS_TO_VISIT,
+    MAX_SUBPAGES_PER_CAMPAIGN,
     MAX_PRODUCTS_PER_CAMPAIGN_TO_VISIT,
     REQUEST_DELAY_SECONDS,
 )
@@ -16,6 +17,7 @@ from parser import (
     parse_product_list,
     parse_product_detail_page,
     parse_campaign_subpages,
+    extract_id_from_url,
 )
 from storage import save_campaigns, save_product_incremental
 
@@ -36,12 +38,13 @@ def main():
     crawler = PrivaliaCrawler()
 
     # Netejar fitxers anteriors per començar de zero en aquesta sessió
-    for csv_file in [PRODUCTS_CSV, CAMPAIGNS_CSV]:
-        if os.path.exists(csv_file):
-            try:
-                os.remove(csv_file)
-            except Exception:
-                pass
+    # Comentat per mantenir históric
+    # for csv_file in [PRODUCTS_CSV, CAMPAIGNS_CSV]:
+    #     if os.path.exists(csv_file):
+    #         try:
+    #             os.remove(csv_file)
+    #         except Exception:
+    #             pass
 
     try:
         crawler.login()
@@ -67,18 +70,6 @@ def main():
         campaigns_to_visit = campaigns[:MAX_CAMPAIGNS_TO_VISIT]
         extraction_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        campaigns_data = []
-        for camp in campaigns_to_visit:
-            campaigns_data.append({
-                "campaign_url": camp.get("url", ""),
-                "brand_name": camp.get("name", "").strip(),
-                "sector": camp.get("sector", ""),
-                "end_date_text": camp.get("end_date", ""),
-                "extraction_timestamp": extraction_ts
-            })
-
-        save_campaigns(campaigns_data, CAMPAIGNS_CSV)
-
         for camp_index, camp in enumerate(campaigns_to_visit, start=1):
             camp_url = camp.get("url", "")
             camp_name = camp.get("name", "").strip() or camp_url
@@ -99,17 +90,31 @@ def main():
                 debug_prefix=f"02_campaign_{camp_index}" if save_debug else None
             )
 
-            listing_pages = [{"url": camp_url, "label": "principal"}]
             discovered_subpages = parse_campaign_subpages(camp_html, campaign_url=camp_url)
-            listing_pages.extend(discovered_subpages)
+            listing_pages = discovered_subpages[:MAX_SUBPAGES_PER_CAMPAIGN]
+
+            # Si no hem detectat cap subpàgina, usem principal com a fallback d'últim recurs
+            if not listing_pages:
+                listing_pages = [{"url": camp_url, "label": "principal"}]
+            # Si per alguna raó la primera no és la nostra URL, l'afegim al principi
+            elif listing_pages[0]["url"].rstrip("/") != camp_url.rstrip("/"):
+                # Però mirem si ja existeix a la llista
+                exists = any(p["url"].rstrip("/") == camp_url.rstrip("/") for p in listing_pages)
+                if not exists:
+                    listing_pages.insert(0, {"url": camp_url, "label": "principal"})
 
             print(f"  Subpàgines detectades: {len(discovered_subpages)}")
+            sub_labels = [s.get("label", "") for s in discovered_subpages if s.get("label")]
+            sub_categories_text = ", ".join(sub_labels)
+            
+
             for subpage in discovered_subpages[:15]:
                 label = subpage.get("label", "") or "sense nom"
                 print(f"    - {label}: {subpage.get('url', '')}")
 
             all_products = []
             seen_product_urls = set()
+            total_discovered_count = 0
 
             for page_index, listing in enumerate(listing_pages, start=1):
                 listing_url = listing.get("url", "")
@@ -128,6 +133,7 @@ def main():
                     )
 
                 page_products = parse_product_list(listing_html, camp)
+                total_discovered_count += len(page_products)
 
                 for product in page_products:
                     product["subcategory"] = listing_label
@@ -139,6 +145,20 @@ def main():
 
                 print(f"    Productes únics acumulats: {len(all_products)}")
                 time.sleep(REQUEST_DELAY_SECONDS)
+
+            # Ara que tenim tots els productes comptats, guardem la campanya al CSV
+            save_campaigns([{
+                "campaign_id": extract_id_from_url(camp_url),
+                "campaign_url": camp_url,
+                "total_products_count": total_discovered_count,
+                "unique_products_count": len(all_products),
+                "brand_name": camp.get("name", "").strip(),
+                "subcategories": sub_categories_text,
+                "end_date_text": camp.get("end_date", ""),
+                "extraction_timestamp": extraction_ts
+            }], CAMPAIGNS_CSV)
+
+            print(f"  Total: {total_discovered_count} trobats, {len(all_products)} únics.")
 
             print(f"  Productes totals trobats: {len(all_products)}")
 
@@ -165,7 +185,9 @@ def main():
                 complete_data = parse_product_detail_page(prod_html, product)
 
                 product_item = {
+                    "product_id": extract_id_from_url(prod_url),
                     "product_url": prod_url,
+                    "campaign_id": extract_id_from_url(camp_url),
                     "campaign_url": camp_url,
                     "product_name": complete_data.get("product_name", ""),
                     "description": complete_data.get("description", ""),
@@ -173,8 +195,10 @@ def main():
                     "discount_price": complete_data.get("discount_price", ""),
                     "discount_percentage": complete_data.get("discount_percentage", ""),
                     "color": complete_data.get("color", ""),
-                    "sizes_status": complete_data.get("available_sizes", ""),
-                    "subcategory": complete_data.get("subcategory", product.get("subcategory", ""))
+                    "sizes_status": complete_data.get("sizes_status", ""),
+                    "subcategory": complete_data.get("subcategory", product.get("subcategory", "")),
+                    "image_url": complete_data.get("image_url", ""),
+                    "extraction_timestamp": extraction_ts
                 }
 
                 print(

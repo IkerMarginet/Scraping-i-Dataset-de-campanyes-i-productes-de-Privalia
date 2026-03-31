@@ -7,19 +7,25 @@ def save_campaigns(campaigns_list, filepath):
         return
 
     headers = [
+        "campaign_id",
         "campaign_url",
+        "total_products_count",
+        "unique_products_count",
         "brand_name",
-        "sector",
+        "subcategories",
         "end_date_text",
         "extraction_timestamp",
     ]
-    _write_csv(campaigns_list, filepath, headers, append=False)
+    _write_csv(campaigns_list, filepath, headers, append=True)
 
 
 def save_product_incremental(product_dict, filepath):
     headers = [
+        "product_id",
         "product_url",
+        "campaign_id",
         "campaign_url",
+        "subcategory",
         "product_name",
         "description",
         "original_price",
@@ -27,7 +33,8 @@ def save_product_incremental(product_dict, filepath):
         "discount_percentage",
         "color",
         "sizes_status",
-        "subcategory",
+        "image_url",
+        "extraction_timestamp",
     ]
     _write_csv([product_dict], filepath, headers, append=True)
 
