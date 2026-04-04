@@ -27,7 +27,6 @@ def save_product_incremental(product_dict, filepath):
         "campaign_url",
         "subcategory",
         "product_name",
-        "description",
         "original_price",
         "discount_price",
         "discount_percentage",

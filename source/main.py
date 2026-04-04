@@ -189,7 +189,6 @@ def main():
                     "campaign_id": extract_id_from_url(camp_url),
                     "campaign_url": camp_url,
                     "product_name": complete_data.get("product_name", ""),
-                    "description": complete_data.get("description", ""),
                     "original_price": complete_data.get("original_price", ""),
                     "discount_price": complete_data.get("discount_price", ""),
                     "discount_percentage": complete_data.get("discount_percentage", ""),
