@@ -19,7 +19,7 @@ from parser import (
     parse_campaign_subpages,
     extract_id_from_url,
 )
-from storage import save_campaigns, save_product_incremental
+from storage import save_campaigns, save_product_incremental, get_scraped_campaign_urls
 
 
 def main():
@@ -34,6 +34,18 @@ def main():
         print(" -> Mode depuració ACTIU. Les imatges es guardaran a /docs/imatges.")
     else:
         print(" -> Mode depuració INACTIU. No es guardaran imatges.")
+
+    duplicate_choice = input("Vols duplicar campanyes ja existents? (s/n, defecte: n): ").lower().strip()
+    allow_duplicates = duplicate_choice == "s"
+
+    scraped_urls = set()
+    if not allow_duplicates:
+        print(" -> Es mantindrà el contingut al csv i només s'afegiran les campanyes que no hi siguin.")
+        scraped_urls = get_scraped_campaign_urls(CAMPAIGNS_CSV)
+        if scraped_urls:
+            print(f" -> S'han detectat {len(scraped_urls)} campanyes ja registrades prèviament.")
+    else:
+        print(" -> S'afegiran totes les campanyes al CSV existent, generant possibles duplicats.")
 
     crawler = PrivaliaCrawler()
 
@@ -73,6 +85,13 @@ def main():
         for camp_index, camp in enumerate(campaigns_to_visit, start=1):
             camp_url = camp.get("url", "")
             camp_name = camp.get("name", "").strip() or camp_url
+
+            if camp_url in scraped_urls:
+                print(
+                    f"\n--- [{camp_index}/{len(campaigns_to_visit)}] "
+                    f"SALTANT campanya (ja existent al csv): {camp_name} ---"
+                )
+                continue
 
             print(
                 f"\n--- [{camp_index}/{len(campaigns_to_visit)}] "

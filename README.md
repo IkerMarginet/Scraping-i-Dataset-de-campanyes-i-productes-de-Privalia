@@ -89,7 +89,9 @@ Per dur a terme aquest exemple es farà ús de formats relaxats basats en voler 
 python source/main.py
 ```
 
-**(Al terminal intern se'ns demanarà si volem mode de depuració. Al escriure `n` el procés iniciarà del zero en mode silenciós i net i exportarà només els fets capturats, un darrera un altre cap als nostres fitxers dataset CSV fins acabar els màxims designats)**
+**(Al terminal intern se'ns faran inicialment dues preguntes curtes de configuració del menú:
+1. Si volem activar el mode de depuració (recomanat premeu Enter per triar defecte `n`, fet que l'activarà en mode silenciós limitant el guardat de HTML i captures innecessàries).
+2. Si volem duplicar campanyes ja existents (aquí és recomanable polsar Enter per defecte `n`, el que permetrà reprendre l'execució allà on la teníem en el cas d'aturades, mantenint les dades que ja existien als nostres CSV sense tornar a escanejar de zero marques que ja havíem recollit, d'allí l'estalvi important de duplicats i de temps).**
 
 ### Exemple 2: Execució ràpida delimitada al testeig (1 Campanya, 5 Productes)
 

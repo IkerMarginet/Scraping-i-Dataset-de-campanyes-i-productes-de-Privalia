@@ -52,3 +52,19 @@ def _write_csv(data_list, filepath, headers, append=False):
 
         for item in data_list:
             writer.writerow(item)
+
+
+def get_scraped_campaign_urls(filepath):
+    if not os.path.exists(filepath):
+        return set()
+    
+    urls = set()
+    try:
+        with open(filepath, mode="r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if "campaign_url" in row:
+                    urls.add(row["campaign_url"])
+    except Exception as e:
+        print(f"Error llegint {filepath}: {e}")
+    return urls
