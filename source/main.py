@@ -79,23 +79,33 @@ def main():
                 "No s'han trobat campanyes reals a la pàgina principal. Revisa els fitxers de debug."
             )
 
-        campaigns_to_visit = campaigns[:MAX_CAMPAIGNS_TO_VISIT]
+        campaigns_to_visit = campaigns
         extraction_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        processed_campaigns_count = 0
+        skipped_campaigns_count = 0
+
         for camp_index, camp in enumerate(campaigns_to_visit, start=1):
+            if processed_campaigns_count >= MAX_CAMPAIGNS_TO_VISIT:
+                print(f"\nS'ha assolit el límit estricte de processar {MAX_CAMPAIGNS_TO_VISIT} campanyes restants.")
+                break
+
             camp_url = camp.get("url", "")
             camp_name = camp.get("name", "").strip() or camp_url
+            display_name = camp_name[:40] + "..." if len(camp_name) > 40 else camp_name
 
             if camp_url in scraped_urls:
+                skipped_campaigns_count += 1
                 print(
                     f"\n--- [{camp_index}/{len(campaigns_to_visit)}] "
-                    f"SALTANT campanya (ja existent al csv): {camp_name} ---"
+                    f"SALTANT campanya (ja existent al csv) [Saltades: {skipped_campaigns_count}]: {display_name} ---"
                 )
                 continue
 
+            processed_campaigns_count += 1
             print(
                 f"\n--- [{camp_index}/{len(campaigns_to_visit)}] "
-                f"S'està processant la campanya: {camp_name} ---"
+                f"S'està processant la campanya [Noves processades: {processed_campaigns_count}]: {display_name} ---"
             )
 
             if not camp_url.startswith("http"):
