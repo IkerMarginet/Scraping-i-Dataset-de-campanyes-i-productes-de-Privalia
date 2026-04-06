@@ -114,7 +114,7 @@ python source/main.py
 
 El *dataset* generat durant aquesta pràctica i vinculat al procediment avaluatori roman penjat d'acord amb els compromisos pel projecte educatiu sota un registre i preservació lliure des de la plataforma de dades obertes d'investigació tipus Zenodo per assegurar la possibilitat d'explorar, fer servir i fomentar tot un procés replicable.
 
-* **DOI de Zenodo Dataset**: `[Substituir amb el link de Zenodo DOI quan es generi, ex: 10.5281/zenodo.1234567]`
+* **DOI de Zenodo Dataset**: `[https://doi.org/10.5281/zenodo.19441893]`
 
 ## ⚖️ Consideracions Ètiques y d'Ús
 
