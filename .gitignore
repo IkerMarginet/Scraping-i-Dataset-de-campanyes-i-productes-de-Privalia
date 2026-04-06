@@ -15,7 +15,6 @@ scripts/
 
 # Project specific
 # dataset/
-# docs/imatges/
 debug/
 *.log
 *.html
